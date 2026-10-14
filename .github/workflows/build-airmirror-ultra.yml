@@ -1,0 +1,71 @@
+
+name: Build AirMirror Ultra APK
+
+on:
+  workflow_dispatch:
+
+env:
+  # Pinned upstream commit (GPL-3.0, based on UxPlay). Pinning keeps the build reproducible.
+  UPSTREAM_REPO: jqssun/android-airplay-server
+  UPSTREAM_SHA: c8defdd70d7e6a04f4f1b71d353653682d594106
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out pinned upstream source (with submodules)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_SHA }}
+          submodules: recursive
+
+      - name: Apply AirMirror Ultra rebrand
+        run: |
+          cat > rebrand.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          edit() {
+            sed -i -E "$2" "$1"
+            grep -qE "$3" "$1" || { echo "REBRAND FAILED: $1 ($3)"; exit 1; }
+          }
+          edit app/src/main/res/values/strings.xml 's#<string name="app_name">AirPlay Server</string>#<string name="app_name">AirMirror Ultra</string>#' 'app_name">AirMirror Ultra<'
+          edit app/src/main/res/values/strings.xml 's#AirPlay Server Running#AirMirror Ultra Running#' 'AirMirror Ultra Running'
+          edit app/src/main/kotlin/io/github/jqssun/airplay/Prefs.kt 's#DEF_SERVER_NAME = "Android AirPlay"#DEF_SERVER_NAME = "AirMirror Ultra"#' 'DEF_SERVER_NAME = "AirMirror Ultra"'
+          edit app/build.gradle.kts 's#applicationId = "io.github.jqssun.airplay"#applicationId = "com.airmirror.ultra"#' 'applicationId = "com.airmirror.ultra"'
+          edit app/build.gradle.kts 's#versionName = "0.0.31"#versionName = "0.0.31-amu1"#' 'versionName = "0.0.31-amu1"'
+          echo "Rebrand OK"
+          SCRIPT
+          bash rebrand.sh
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "21"
+          cache: gradle
+
+      - name: Create a signing key for this build
+        run: |
+          keytool -genkeypair -v -keystore "$GITHUB_WORKSPACE/amu.jks" -storepass amupass123 \
+            -keypass amupass123 -alias amu -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=AirMirror Ultra"
+          {
+            echo "storeFile=$GITHUB_WORKSPACE/amu.jks"
+            echo "storePassword=amupass123"
+            echo "keyAlias=amu"
+            echo "keyPassword=amupass123"
+          } > local.properties
+
+      - name: Build release APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirMirrorUltra-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
